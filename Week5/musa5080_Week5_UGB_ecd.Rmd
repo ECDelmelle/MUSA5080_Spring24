@@ -1,0 +1,302 @@
+---
+title: "MUSA 508 Lab 3"
+author: "Matthew Harris & Michael Fichman"
+date: "September, 2022"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+---
+* Edited by E. Delmelle Feb 14, 2024
+
+
+# Introduction
+
+Today's lab will use some of the Chapter 3 data from Ken Steif's book (the Lancaster County UGB) as material for making maps using `ggplot` and `sf`.
+
+After uploading the data, we will do some geoprocessing using SF, and then you will undertake two data visualization exercises.
+
+This .rmd document will then be the basis for you to "knit" your own Markdown HTML document, which is the presentation format for your homeworks due next week.
+
+# Setup
+
+Set up the Markdown parameters and load your libraries. If you don't have any of the following 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(scipen=999)
+
+
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(gridExtra)
+library(grid)
+library(knitr)
+library(kableExtra)
+library(rmarkdown)
+library(RColorBrewer)
+library(classInt)
+```
+
+
+# Load the data
+
+
+```{r load_data, message = FALSE}
+lancCounty <- st_read("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/Chapter2/LancasterCountyBoundary.geojson") %>%
+  st_transform('ESRI:102728')
+
+uga <- st_read("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/Chapter2/Urban_Growth_Boundary.geojson") %>% 
+  st_transform('ESRI:102728')     
+
+studyAreaTowns <- st_read("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/Chapter2/StudyAreaTowns.geojson") %>%
+  st_transform('ESRI:102728')    
+
+buildings <- st_read("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/Chapter2/LancasterCountyBuildings.geojson") %>% st_transform('ESRI:102728')    
+
+greenSpace <- st_read("https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/Chapter2/LancasterGreenSpace.geojson") %>% st_transform('ESRI:102728')
+```
+
+## Exploring our spatial data
+
+Let's explore these data sets by using commands like `glimpse()`
+
+What do you find? What kind of data are these?
+
+Make some simple ggplots with `geom_sf` by mapping the municipalities, the Lancaster County Boundary and the UGA and put them in a chunk right here:
+
+I set the linetype argument to 5. This is to make the boundary of the UGB distinct from the municipality boundaries. Linetype options include: 0 = blank, 1= solid, 2 = dashed, 3 = dotted, 4= dotdash, 5 = long dash, 6 = dot dash. I also set the line width to 0.5. Feel free to experiment with these options.
+
+```{r first_maps}
+ggplot()+
+  geom_sf(data = studyAreaTowns, aes(fill = MUNI))+
+  geom_sf(data = uga, fill = "transparent", color = "white", linetype = 5, lwd = 0.5)+
+  theme_void()
+```
+
+Now let's get some census data to work a bit more on maps
+
+
+```{r getcensus}
+tracts17 <- 
+  get_acs(geography = "tract", variables = c("B25026_001E","B25058_001E"), 
+          year=2017, state=42, county="Lancaster", geometry=T, output="wide") %>%
+  st_transform('ESRI:102728') %>%
+  rename(TotalPop = B25026_001E, 
+         MedRent = B25058_001E) %>%
+  dplyr::select(-NAME, -starts_with("B")) %>%
+  mutate(area_sqFt = (as.numeric(st_area(.))))
+```
+
+As a warm-up, calculate the population density of each tract. We will then try to make a slightly better choropleth map than the one we did previously.
+The code below just uses population as an example. It is a ggplot map that contains discrete groups - broken into quantiles
+
+
+```{r improvedmap}
+ # Assuming tracts17 and uga are loaded and properly formatted spatial dataframes
+
+# Calculate quantiles for class breaks
+breaks_quantiles <- classIntervals(tracts17$TotalPop, n = 5, style = "quantile")
+
+# Define colors using ColorBrewer palette - matching the number of breaks
+colors <- brewer.pal(n = 5, name = "YlGnBu")
+
+# Generate custom labels showing the range of each class
+labels <- paste0(formatC(breaks_quantiles$brks[-length(breaks_quantiles$brks)], format = "f", digits = 1, big.mark = ","), 
+                 " - ", 
+                 formatC(breaks_quantiles$brks[-1], format = "f", digits = 1, big.mark = ","))
+
+# Create improved map with custom range labels for legend
+map_improved <- ggplot() +
+  geom_sf(data = tracts17, aes(fill = cut(TotalPop, breaks = breaks_quantiles$brks, include.lowest = TRUE)), color = "lightgrey") +
+  scale_fill_manual(values = colors,
+                     name = "Population",
+                     labels = labels) +  # Use custom range labels
+  geom_sf(data = uga, fill = NA, color = "white", linetype = 1, lwd = 0.5) +  # Use NA for fill to make the boundaries transparent
+  labs(title = "Population of Census Tracts in Lancaster County") +
+  theme_void()
+
+# Display the map
+map_improved
+
+
+
+```
+
+Here is the tmap version. I think its a bit more straightforward to create a nice looking map.
+This one is set to quantile, but you can check out other classification methods (jenks, pretty).
+
+The basic steps for creating a tmap are as follows:
+
+*Use tm_shape() to specify your spatial data and tm_polygons() to define how you want to fill the polygons (e.g., based on a certain variable). Adjust the fill argument to match the variable in your dataset that you want to visualize as follows:
+
+
+map <- tm_shape(my_spatial_data) +
+  tm_polygons(fill = "variable_to_visualize", style = "cat", palette = "Blues", title =      "Variable Title") +
+  tm_layout(legend.position = c("left", "bottom"))
+
+Replace "variable_to_visualize" with the name of the variable in your dataset that you want to map, and "Variable Title" with a suitable title for your legend.
+
+You can customize your map further using tm_layout() and other tmap functions to adjust elements like titles, legends, scales, etc.
+
+map <- map +
+  tm_title("Your Map Title") +
+  tm_borders() +
+  tm_legend(position = c("right", "bottom"))
+
+
+See the code below. Change to population density. Experiment with the settings. Try to add an outer border to the map indicating the county outline. 
+
+```{r tmapversion}
+map_improved <- tm_shape(tracts17) +
+  tm_polygons(fill = "TotalPop", style = "quantile", border.col = NA, n=6,title = "Population", palette = "YlGnBu" )+
+  tm_layout(frame = FALSE,legend.frame = FALSE)+
+  tm_title("Population of Census Tracts in Lancaster County")
+
+
+#Now let's add the growth boundary
+map_improved <- map_improved + tm_shape(uga)+
+  tm_borders(col = "red", lwd = 1.5)
+
+# Add the UGA layer to the legend manually
+map_improved <- map_improved + 
+  tm_add_legend(type = "lines", col = "red", lwd = 1.5, labels = "Urban Growth Area")
+
+
+map_improved
+
+```
+
+
+
+# Geoprocessing
+
+We are going to do some meat-and-potatoes vector GIS - union and buffer.
+For a great overview on the GIS-vector operations in R check out this book chapter: https://r.geocompx.org/geometry-operations
+
+
+## Union
+
+Merging all the shapes. The use of `st_buffer(1)` is to add a little bit of room (here it is 1ft) to consolidates small inconsistencies in the outline of each UGA polygon. These occur when digitizing polygons is not perfectly done; and rarely is it perfect!
+
+
+```{r union}
+uga_union <- 
+  st_union(uga) %>%
+  st_buffer(1) %>%
+  st_sf()
+```
+
+
+## Outside and inside buffers
+
+We create our `outsideBuffer`, our `insideBuffer` and then we `rbind` the buffers together. To get a better sense of what's going on here, let's take apart the codes and run them line by line in the code chunk below.
+
+Note negative buffers create an 'inward' buffer.
+
+What's up with that '.' argument?
+
+The st_difference calculates the difference between the original 
+
+What is `rbind` doing? What are the conditions that allow it to work?
+
+Try taking it apart and figuring out what's going on. A detailed explanation follows if that helps.
+
+```{r buffers}
+outsideBuffer <-
+  st_buffer(uga_union, 660) %>%
+  st_difference(uga_union) %>%
+  mutate(Legend = "Outside")
+
+
+insideBuffer <- 
+  st_buffer(uga_union, dist = -660) %>%
+  st_difference(uga_union, .) %>%
+  mutate(Legend = "Inside")
+
+bothBuffers <- rbind(insideBuffer, outsideBuffer)
+```
+A description from ChatGPT
+Outside Buffer Creation:
+
+st_buffer(uga_union, 660): This creates a buffer zone around uga_union that extends 660 units outward from the boundary. The units depend on the coordinate reference system of uga_union.
+
+st_difference(uga_union): This function subtracts the original uga_union geometry from the buffered area, resulting in a new geometry representing only the area between the original boundary and the outer edge of the buffer.
+
+mutate(Legend = "Outside"): Assuming your data is in a format that supports dplyr operations, this adds a new column to the spatial data frame, labeling the buffered area as "Outside".
+Inside Buffer Creation:
+
+st_buffer(uga_union, dist = -660): Creates a buffer inside the boundary of uga_union, shrinking the area by 660 units. This "negative" buffer is useful for creating a margin inside the boundary.
+
+st_difference(uga_union, .): This subtracts the shrunken area from the original uga_union, resulting in a ring that lies between the original boundary and the inner edge of the negative buffer.
+
+mutate(Legend = "Inside"): Labels the resulting geometry as "Inside".
+
+Regarding that '.':
+
+The st_difference(uga_union, .) function call is part of a pipeline and is intended to subtract the geometry of uga_union from the result of the previous step (st_buffer(uga_union, dist = -660)).
+
+Here, . acts as a placeholder for the result of the preceding operation in the pipeline. It essentially tells st_difference to use the buffered geometry (the result of st_buffer(uga_union, dist = -660)) as the second argument.
+
+This usage is necessary because st_difference typically subtracts the second geometry from the first. In this context, you want to subtract the original uga_union geometry from the "inside buffer" created by st_buffer, which is the result of the previous pipeline step.
+
+In contrast, with the outsidebuffer:
+
+the st_difference(uga_union) function call doesn't explicitly use the . placeholder. In this context, the absence of a second argument in st_difference implies that the function should use the first argument (uga_union) and the result of the preceding operation (the buffered geometry from st_buffer(uga_union, 660)) as its two inputs.
+
+When st_difference is used in a pipeline without specifying the second argument, it automatically assumes the result of the previous step in the pipeline as the second geometry to perform the difference operation on. Therefore, the explicit use of . is not necessary.
+
+In summary, the . in the insideBuffer operation explicitly directs st_difference to use the piped-in result as its second argument, which is essential due to the reversed order of operations (subtracting the original geometry from the buffered one). In the outsideBuffer operation, the implicit behavior of st_difference in a pipeline context achieves the desired result without needing to specify . explicitly.
+
+# Map the buffers
+
+Here is a basic plot of the buggers that we have created.
+
+```{r buffer_plot}
+ggplot() + 
+  geom_sf(data = bothBuffers, aes(fill = Legend)) +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4")) + 
+  labs(title = "1/8mi Buffer Inside & Outside UGA") +
+  theme_void()
+```
+
+
+Can we try to recreate this using tmap? Follow the formula above. Set the palette to the two colors
+
+```{r buffer_plot_tmap}
+#Your Code Here!
+```
+
+
+# Join the Town info to the buffers
+
+Now we will intersect the municipalities with the new buffers.
+Here `st_make_valid()` is used to fix inconsistencies in polygon geometry. Try running the code without `st_make_valid` and you will see an error about invalid geometry due to self-intersecting polygons.
+Note: You will see the warning message of `attribute variables are assumed to be spatially constant ...`. It is an informative warning and you will see it often working with {sf}, but you can ignore it.
+
+```{r buffersAndTowns}
+buffersAndTowns <- 
+  st_intersection(st_make_valid(studyAreaTowns),
+                  bothBuffers) %>%
+  filter(MUNI != "MOUNTVILLE BOROUGH")
+```
+
+# Challenge 1: Compare densities
+Can you make a table summarizing population density of tracts inside versus outside the boundary? (buffer)
+
+
+# Mapping Challenge 
+
+Find a way to map the inside and outside buffers nicely that distinguishes them from each other AND shows the municipalities they belong to. Try manipulating the colors (remember our palettes, and the `viridis` package? remember `scale_fill_manual`). Add geographic context. Add legends and titles and subtitles.
+
+Consider how you might label objects in your map using
+
+`geom_sf_text(data = studyAreaTowns, aes(label = MUNI), size = 3)`
+
+Think about ways to manipulate the `studyAreaTowns` data inside that text geom to make it more legible.
+
+Put all this code into a markdown chunk that runs correctly and allows this markdown to `knit`. Then see if you can manipulate the chunk options so that there aren't annoying warnings and other messages you don't want showing up in an assignment.
+
+
+note you are free to explore with both ggplot and tmap!
