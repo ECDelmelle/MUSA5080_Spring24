@@ -48,9 +48,9 @@ The in-class exercise at the end encourages students to modify the existing code
 
 ```{r read_data}
 
-nhoods <- 
-  st_read("https://github.com/ECDelmelle/MUSA5080_Spring24/blob/main/Week7/BPDA_Neighborhood_Boundaries.geojson") %>%
-  st_transform('ESRI:102286')
+# nhoods <- 
+#   st_read("https://github.com/ECDelmelle/MUSA5080_Spring24/blob/main/Week7/BPDA_Neighborhood_Boundaries.geojson") %>%
+#   st_transform('ESRI:102286')
 
 ##If that is failing you, download the data to your own personal computer and link to the full path name. Sorry!
 
@@ -101,6 +101,32 @@ ggplot() +
   labs(title="Price Per Square Foot, Boston") +
   theme_void()
 ```
+
+```{r lostmap}
+# Load necessary library
+library(RColorBrewer)
+
+# Select a color brewer palette for sequential data
+palette5 <- brewer.pal(5, "YlGnBu")
+
+# Calculate quintiles for PricePerSq
+boston.sf$quintiles <- ntile(boston.sf$PricePerSq, 5)
+
+# Create the plot
+ggplot() +
+  geom_sf(data = nhoods, fill = "grey40") +
+  geom_sf(data = boston.sf, aes(fill = as.factor(quintiles)), 
+          show.legend = "point", size = 0.75) +
+  scale_fill_manual(values = palette5, 
+                    labels = paste("Quintile", 1:5), 
+                    name = "Price Per Square Foot") +
+  labs(title = "Price Per Square Foot, Boston") +
+  theme_void()
+
+```
+
+
+
 
 ### Cleaning Crime Data
 Why are we using a filter for `Lat > -1`?
@@ -388,7 +414,7 @@ Better R-squared - does that mean it's a better model?
 
 ```{r mutlivariate_regression}
 reg1 <- lm(SalePrice ~ ., data = boston_sub_200k %>% 
-                                 dplyr::select(SalePrice, LivingArea, Style, 
+                                 dplyr::select(SalePrice, LivingArea,  
                                                GROSS_AREA, R_TOTAL_RM, NUM_FLOORS,
                                                R_BDRMS, R_FULL_BTH, R_HALF_BTH, 
                                                R_KITCH, R_AC, R_FPLACE))
