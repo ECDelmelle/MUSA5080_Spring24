@@ -1,0 +1,268 @@
+---
+title: "Week 7"
+author: "Elizabeth Delmelle"
+date: "2024-02-29"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(GGally)
+library(MASS)
+library(ISLR2)
+```
+
+Let's begin with a warm-up exercise from last week.
+This question involves the use of multiple linear regression on the
+Auto data set.
+(a) Produce a scatterplot matrix which includes all of the variables in the data set.
+(b) Compute the matrix of correlations between the variables using
+the function cor(). You will need to exclude the name variable, which is qualitative. cor()
+(c) Use the lm() function to perform a multiple linear regression
+with mpg as the response and all other variables except name as
+the predictors. Use the summary() function to print the results.
+Comment on the output. For instance:
+  #i. Is there a relationship between the predictors and the response?
+  #ii. Which predictors appear to have a statistically significant relationship to the response?
+
+# Step 1
+Let's begin with a scatterplot. There are several options. Here is one that cool kids these days might use.
+```{r corrplot}
+# Produce scatterplot matrix
+ggpairs(Auto[1:8])
+```
+
+This is a bit more old fashioned. Like myself.
+
+```{r oldladycorrelations}
+# Compute the matrix of correlations (excluding 'name' variable)
+correlation_matrix <- cor(Auto[, -9])  # Excluding the 9th column (name)
+
+# Print correlation matrix
+print(correlation_matrix)
+```
+
+Now run a regression. This is just a reminder of how to use all the variables and then update it in case you forget to exclude one. Like name
+
+```{r regression1}
+
+lm.fit <- lm(mpg ~ ., data = Auto)
+summary(lm.fit)
+lm.fit1 <- update(lm.fit , ~ . - name)
+summary(lm.fit1)
+
+```
+
+Let's go through again and look at some diagnostic plots
+
+```{r diagnosis}
+#diagnostic plots
+par(mfrow = c(2, 2))
+plot(lm.fit1)
+```
+
+The residuals seem a bit abnornormal (non-normal). What to do?
+Normality of Residuals:
+  
+Problem: Residuals are not normally distributed; they exhibit skewness or heavy tails.
+Fix: Transform the response variable to achieve normality 
+(e.g., log transformation), or consider using robust standard errors if the sample size is large enough.
+
+Let's see what happens when we log the dependent variable
+```{r logmodel}
+lm.fit <- lm(log(mpg) ~ ., data = Auto)
+summary(lm.fit)
+lm.fit1 <- update(lm.fit , ~ . - name)
+summary(lm.fit1)
+
+#diagnostic plots
+par(mfrow = c(2, 2))
+plot(lm.fit1)
+
+```
+
+It is important to recognize that by taking the log of the dependent variable, we change the interpretation of the results.
+
+* Interpret the coefficients of the predictor variables as the percentage change in the mean response for a one-unit change in the predictor, holding other predictors constant.
+For example, if the coefficient for predictor1 is 0.05, you would interpret it as a 5% increase in the mean response for each one-unit increase in predictor1. 
+
+* To interpret the results in terms of the original scale of the dependent variable, back-transform the coefficients and predictions using the exponential function (exp() in R).
+For example, to back-transform the coefficient of predictor1: exp(coef(model)["predictor1"]).
+
+
+
+We also observed in our initial plots that there were some potential non-linear relationships between the response and predictor variables. We could try to transform those to see if we get a better fit.Specifically Displacement, horsepower, and weight (which are all highly correlated with each other. So we should check for multi-collinearity)
+
+
+Check for multicollinearity - we noticed some high correlations in the scatterplots and correlation matrix didn't we?
+```{r vif}
+# Calculate Variance Inflation Factors (VIF)
+library(car)
+vif(lm.fit1)
+```
+
+Holy Moses.
+There are some concerning VIFs. Like displacement. That looks like a bad banana.
+
+```{r model2}
+model2 <- lm(mpg ~ displacement + weight +acceleration + year + origin, data = Auto)
+summary(model2)
+
+par(mfrow = c(2, 2))
+plot(model2)
+vif(model2)
+```
+
+How about just include weight as it is the most strongly correlated of the three, but try to use a squared term?
+
+```{r}
+model3 <- lm(mpg ~ I(weight^2) +acceleration + year + origin, data = Auto)
+summary(model3)
+
+par(mfrow = c(2, 2))
+plot(model3)
+vif(model3)
+```
+
+
+
+Look for outliers that are problematic (bad bananas)
+
+```{r outliers}
+# Plot standardized residuals vs. leverage
+plot(model2, which = 5)
+
+# Identify influential points using Cook's distance
+influenceIndexPlot(model2, id.method = "identify", main = "Cook's Distance Plot")
+
+```
+Check for high leverage outliers
+
+```{r lev}
+plot(model2, which = 4)
+```
+
+You could take a dive and look into that observation number 327. 
+You could remove it and run the regression with it and without it to see if its ruining your life. If it were data you were more familiar with, investigate to see what's going on..
+
+# 2 Exploring Validation and Cross Validation.
+Adapted from: https://hastie.su.domains/ISLR2/Labs/Rmarkdown_Notebooks/Ch5-resample-lab.Rmd
+
+We will begin by trying old plain old validation. We will split the data into two halves by selecting a random subset of 196 observations out of the original 392.
+
+Whenever we do something that involves random values to be selected, it is a good practice to set the 'seed' using set.seed(). This will ensure that you will get the same value each time and ensure that your analysis is reproducible.
+
+We will use the 'sample()' function to randomly split the data into the training and testing dataset.
+
+```{r sample1}
+set.seed(1)
+train <- sample(392, 196)
+```
+
+
+We then use the `subset` option in `lm()` to fit a linear regression using only the observations corresponding to the training set.
+
+```{r subsetregression}
+lm.fit <- lm(mpg ~ horsepower, data = Auto, subset = train)
+```
+
+We now  use the 'predict()' function to estimate the response for all $392$ observations,  and we  use the 'mean()' function to calculate the MSE of the $196$ observations in the validation set. Note that the '-train' index below selects  only the observations that are not in the training set.
+
+We get the MSE by subtracting the original value for the testing data from the predicted value. We square that value so the negative and positive errors don't cancel each other out!
+
+```{r predict1}
+attach(Auto)
+mean((mpg - predict(lm.fit, Auto))[-train]^2)
+```
+
+Therefore, the estimated test MSE for the linear regression fit is $23.27$. We can use the poly() function to estimate the test error for the quadratic and cubic regressions.
+
+```{r modelcompare}
+lm.fit2 <- lm(mpg ~ poly(horsepower, 2), data = Auto, 
+    subset = train)
+mean((mpg - predict(lm.fit2, Auto))[-train]^2)
+lm.fit3 <- lm(mpg ~ poly(horsepower, 3), data = Auto, 
+    subset = train)
+mean((mpg - predict(lm.fit3, Auto))[-train]^2)
+```
+
+These error rates are $18.72$ and $18.79$, respectively.
+If we choose a different training set instead, then we will obtain somewhat different errors on the validation set.
+
+```{r differentseed}
+set.seed(2)
+train <- sample(392, 196)
+lm.fit <- lm(mpg ~ horsepower, subset = train)
+mean((mpg - predict(lm.fit, Auto))[-train]^2)
+lm.fit2 <- lm(mpg ~ poly(horsepower, 2), data = Auto, 
+    subset = train)
+mean((mpg - predict(lm.fit2, Auto))[-train]^2)
+lm.fit3 <- lm(mpg ~ poly(horsepower, 3), data = Auto, 
+    subset = train)
+mean((mpg - predict(lm.fit3, Auto))[-train]^2)
+```
+
+Using this split of the observations into a training set and a validation set,
+we find that the validation set error rates for the models with linear, quadratic, and cubic terms are $25.73$, $20.43$, and $20.39$, respectively.
+
+These results are consistent with our previous findings: a model that predicts `mpg` using a quadratic function of `horsepower` performs better than a model that involves only a linear function of `horsepower`, and there is little evidence in favor of a model that uses a cubic function of `horsepower`.
+
+# Leave-One-Out Cross-Validation
+The LOOCV estimate can be automatically computed for any generalized linear model using the `glm()` and `cv.glm()` functions. 
+
+We will use the glm family of models soon to estimate other, non-linear regressions. But for now, it acts the same as the lm function if we just use the defaults.
+
+```{r glm}
+glm.fit <- glm(mpg ~ horsepower, data = Auto)
+coef(glm.fit)
+```
+
+
+```{r itsthesame}
+lm.fit <- lm(mpg ~ horsepower, data = Auto)
+coef(lm.fit)
+```
+
+We will  perform linear regression using the `glm()` function rather than the `lm()` function because the former can be used together with `cv.glm()`. The `cv.glm()` function is part of the `boot` library.
+
+```{r cv_example1}
+library(boot)
+glm.fit <- glm(mpg ~ horsepower, data = Auto)
+cv.err <- cv.glm(Auto, glm.fit)
+cv.err$delta
+```
+
+The `cv.glm()` function produces a list with several components.  The two numbers in the `delta` vector contain the cross-validation results. In this case the numbers are identical (up to two decimal places) and correspond to the LOOCV statistic.
+
+'delta' refers to the difference in deviance between the full model (trained on all data) and a model trained on a subset of the data.
+
+```{r moremodels}
+cv.error <- rep(0, 10)
+for (i in 1:10) {
+  glm.fit <- glm(mpg ~ poly(horsepower, i), data = Auto)
+  cv.error[i] <- cv.glm(Auto, glm.fit)$delta[1]
+}
+cv.error
+```
+
+We see a sharp drop in the estimated test MSE between the linear and quadratic fits, but then no clear improvement from using higher-order polynomials.
+
+## $k$-Fold Cross-Validation
+
+The `cv.glm()` function can also be used to implement $k$-fold CV. Below we use $k=10$, a common choice for $k$, on the `Auto` data set.
+We once again set a random seed and initialize a vector in which we will store the CV errors corresponding to the polynomial fits of orders one to ten.
+
+```{r k_is_10}
+set.seed(17)
+cv.error.10 <- rep(0, 10)
+for (i in 1:10) {
+  glm.fit <- glm(mpg ~ poly(horsepower, i), data = Auto)
+  cv.error.10[i] <- cv.glm(Auto, glm.fit, K = 10)$delta[1]
+}
+cv.error.10
+```
+
+Notice that the computation time is shorter than that of LOOCV.We still see little evidence that using cubic or higher-order polynomial terms leads to lower test error than simply using a quadratic fit.
+
+The end of Part 1 for week 7. Now we will turn to an intro spatial machine learning and the hedonic, house price model.
+
