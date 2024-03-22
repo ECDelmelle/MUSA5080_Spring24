@@ -25,6 +25,7 @@ library(tufte)
 library(rmarkdown)
 library(kableExtra)
 library(tidycensus)
+library(RColorBrewer)
 # functions and data directory
 root.dir = "https://raw.githubusercontent.com/urbanSpatial/Public-Policy-Analytics-Landing/master/DATA/"
 
@@ -399,9 +400,9 @@ grid.arrange(ncol = 2,
 ```{r}
 st_join(bothRegressions, tracts17) %>% 
   filter(!is.na(incomeContext)) %>%
-  group_by(Regression, incomeContext) %>%
+  group_by(Regression, raceContext) %>%
   summarize(mean.MAPE = scales::percent(mean(SalePrice.APE, na.rm = T))) %>%
   st_drop_geometry() %>%
-  spread(incomeContext, mean.MAPE) %>%
+  spread(raceContext, mean.MAPE) %>%
   kable(caption = "Test set MAPE by neighborhood income context")
 ```
