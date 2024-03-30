@@ -200,6 +200,16 @@ neighborhoods <-
 
 ```
 
+```{r plot2}
+  # Plot 2: Abandoned Cars overlaid on Chicago neighborhooods
+  ggplot() + 
+    geom_sf(data = neighborhoods) +  # Add Chicago boundary
+    geom_sf(data = abandonCars, colour = "red", size = 0.1, show.legend = "point") +  # Overlay burglaries
+    labs(title = "Abandoned Cars, Chicago - 2017") +  # Set plot title
+    theme_void()  # Use a blank theme
+```
+
+
 #### How we aggregate a feature to our fishnet
 
 This is an important chunk of code with some unfamiliar lines. The overall objective is to assign the fishnet ID to each abandoned car point, group the points by fishnet ID and count them per ID, join that count back to the fishnet and then go from a long format to a wide format. We'll step through it:
@@ -337,14 +347,17 @@ final_net.localMorans <-
   dplyr::select(Abandoned_Cars_Count = Abandoned_Cars, 
                 Local_Morans_I = Ii, 
                 P_Value = `Pr(z != E(Ii))`) %>%
-  mutate(Significant_Hotspots = ifelse(P_Value <= 0.001, 1, 0)) %>%
+  mutate(Significant_Hotspots = ifelse((P_Value <= 0.05), 1, 0)) %>%
   gather(Variable, Value, -geometry)
   
 ```
 
 ### Plotting local Moran's I results
 
-This is a complex code chunk - it's a loop which builds ggplots of local Moran's for each of your `vars`
+This is a complex code chunk - it's a loop which builds ggplots of local Moran's for each of your `vars`.
+It is important to recognize that we can get high local moran's I values in the case of either high values near other high values or low values near other low values. If you check out the equation for LMI, you'll see that it is driven by a calulation for all pairs of neighbors, that looks at the (in this case) home values of one neighborhood minus the mean of all home values in the study, times home values of an adjacent neighborhood minus the mean. Therefore, since we multiply them together, two values below the mean will yield and positive value as well two values above the mean. 
+
+In the code below, we examine the local moran's I value, the p-value, and extracts hotspots (that can be hot or cold!) based on the p-value.
 
 > What does a significant hot spot tell us about the distribution of burglaries?
 
@@ -365,19 +378,36 @@ for(i in vars){
 do.call(grid.arrange,c(varList, ncol = 4, top = "Local Morans I statistics, Burglary"))
 ```
 
-## Distance to Hot spot
+Now, we need to actually find the clusters of high-high values that exist in the upper-right quadrant of a local moran's I plot. This plots the original values (Abandoned_Cars) and the spatial lag of that value (wx), the average abandoned cars value for each cells' neighboring cells. Not the scale function in front of abandoned cars in the mp function. This places the values on a z-score so that the average value is 0 and positive values are above the mean (1= 1sd above the mean). A 'high' value technically means it is above the mean of the city. This code then looks for values of the cell that are above the mean and values of its neighborhs that are above the mean and only takes those that are statistically significant.
 
-Using NN distance to a hot spot location
+We create a binary variable called 'hotspot' that meets these criteria.
+```{r lmi_hotspot}
+
+lmoran <- localmoran(final_net$Abandoned_Cars, final_net.weights,  zero.policy=TRUE)
+
+final_net$lmI <- lmoran[, "Ii"] # local Moran's I
+final_net$lmZ <- lmoran[, "Z.Ii"] # z-scores
+final_net$lmp <- lmoran[, "Pr(z != E(Ii))"]
+
+
+mp <- moran.plot(as.vector(scale(final_net$Abandoned_Cars)), final_net.weights, zero.policy = TRUE)
+
+##Create a hotspot variable:
+final_net$hotspot <- 0
+# high-high
+final_net[(mp$x >= 0 & mp$wx >= 0) & (final_net$lmp <= 0.05), "hotspot"]<- 1
+```
+
+Now we will calculate distance to that nearest hotspot
+
 
 ```{r}
 # generates warning from NN
 final_net <- final_net %>% 
-  mutate(abandoned.isSig = 
-           ifelse(local_morans[,5] <= 0.001, 1, 0)) %>%
   mutate(abandoned.isSig.dist = 
            nn_function(st_c(st_coid(final_net)),
                        st_c(st_coid(filter(final_net, 
-                                           abandoned.isSig == 1))), 
+                                           hotspot == 1))), 
                        k = 1))
 
 ## What does k = 1 represent?
@@ -448,9 +478,9 @@ Note that the code here is *different* than in the book - it has been updated to
 ```{r}
 # demo of kernel width
 burg_ppp <- as.ppp(st_coordinates(burglaries), W = st_bbox(final_net))
-burg_KD.1000 <- spatstat.core::density.ppp(burg_ppp, 1000)
-burg_KD.1500 <- spatstat.core::density.ppp(burg_ppp, 1500)
-burg_KD.2000 <- spatstat.core::density.ppp(burg_ppp, 2000)
+burg_KD.1000 <- density.ppp(burg_ppp, 1000)
+burg_KD.1500 <- density.ppp(burg_ppp, 1500)
+burg_KD.2000 <-density.ppp(burg_ppp, 2000)
 burg_KD.df <- rbind(
   mutate(data.frame(rasterToPoints(mask(raster(burg_KD.1000), as(neighborhoods, 'Spatial')))), Legend = "1000 Ft."),
   mutate(data.frame(rasterToPoints(mask(raster(burg_KD.1500), as(neighborhoods, 'Spatial')))), Legend = "1500 Ft."),
@@ -464,7 +494,7 @@ ggplot(data=burg_KD.df, aes(x=x, y=y)) +
   coord_sf(crs=st_crs(final_net)) + 
   scale_fill_viridis(name="Density") +
   labs(title = "Kernel density with 3 different search radii") +
-  mapTheme(title_size = 14)
+  theme_void()
 ```
 
 ```{r}
@@ -477,7 +507,7 @@ as.data.frame(burg_KD.1000) %>%
      geom_sf(data = sample_n(burglaries, 1500), size = .5) +
      scale_fill_viridis(name = "Density") +
      labs(title = "Kernel density of 2017 burglaries") +
-     mapTheme(title_size = 14)
+     theme_void()
 ```
 
 ## Get 2018 crime data
