@@ -291,8 +291,8 @@ ggplot(dat_census %>%
          tally())+
   geom_histogram(aes(n), binwidth = 5)+
   labs(title="Bike share trips per hr by station. Chicago, May, 2018",
-       x="Trip Counts", 
-       y="Number of Stations")+
+       x="Number of Stations", 
+       y="Trip Counts")+
   plotTheme
 ```
 
@@ -352,7 +352,22 @@ Then we compare that to the actual number of combinations. We create an empty da
 We then join the station name, tract and lat/lon (some have multiple lat lon info, so we just take the first one of each using `group_by` and `slice`).
 
 ```{r panel_length_check , message = FALSE, warning = FALSE}
+# Calculate the number of rows in the resulting panel dataset
+# This line calculates the number of rows in the resulting panel dataset by multiplying the number of unique values in the 'interval60' column with the number of unique values in the 'from_station_id' column in the 'dat_census' dataset.
+
 length(unique(dat_census$interval60)) * length(unique(dat_census$from_station_id))
+
+# This block of code creates the panel dataset 'study.panel' using expand.grid and left_join operations.
+
+# 1. expand.grid(): This function generates a data frame where each combination of unique values from the 'interval60' and 'from_station_id'
+#    columns in the 'dat_census' dataset forms a new row. This ensures that each unique combination of time intervals and stations is represented in the panel.
+
+# 2. left_join(): This function joins the expanded grid with a subset of the 'dat_census' dataset containing relevant station information.
+#    - select(): It selects specific columns ('from_station_id', 'from_station_name', 'Origin.Tract', 'from_longitude', 'from_latitude') from the 'dat_census' dataset.
+#    - distinct(): It removes duplicate rows, ensuring that each station is represented only once.
+#    - group_by(from_station_id): It groups the data by 'from_station_id'.
+#    - slice(1): It selects the first row for each station, ensuring that only unique stations are included in the resulting dataset.
+
 
 
 study.panel <- 
@@ -363,7 +378,7 @@ study.panel <-
               distinct() %>%
               group_by(from_station_id) %>%
               slice(1))
-
+# Calculate the number of rows in the resulting panel dataset
 nrow(study.panel)      
 ```
 
@@ -372,18 +387,20 @@ We create the full panel by summarizing counts by station for each time interval
 We also ditch a bit of data (this is why `study.panel` and `ride.panel` don't end up being exactly the same length). There are two stations - Dusable harbor and Eastlake Terrace that don't join properly to census tracts. They are too close to the water and don't play nice with our tracts. In the service of laziness, we get rid of these.
 
 ```{r create_panel , message = FALSE}
+# Create a panel dataset for bike ride data
 ride.panel <- 
-  dat_census %>%
-  mutate(Trip_Counter = 1) %>%
-  right_join(study.panel) %>% 
-  group_by(interval60, from_station_id, from_station_name, Origin.Tract, from_longitude, from_latitude) %>%
-  summarize(Trip_Count = sum(Trip_Counter, na.rm=T)) %>%
-  left_join(weather.Panel) %>%
-  ungroup() %>%
-  filter(is.na(from_station_id) == FALSE) %>%
-  mutate(week = week(interval60),
-         dotw = wday(interval60, label = TRUE)) %>%
-  filter(is.na(Origin.Tract) == FALSE)
+  dat_census %>%  # Start with the dat_census dataset
+  mutate(Trip_Counter = 1) %>%  # Add a Trip_Counter variable, indicating one trip for each row
+  right_join(study.panel) %>%  # Right join with the study.panel dataset to ensure all spatial-time combinations are included
+  group_by(interval60, from_station_id, from_station_name, Origin.Tract, from_longitude, from_latitude) %>%  # Group by spatial-time and station variables
+  summarize(Trip_Count = sum(Trip_Counter, na.rm = TRUE)) %>%  # Summarize the Trip_Counter variable to calculate total trip count for each group
+  left_join(weather.Panel) %>%  # Left join with the weather.Panel dataset to include weather information
+  ungroup() %>%  # Remove grouping
+  filter(!is.na(from_station_id)) %>%  # Filter out rows with missing from_station_id values
+  mutate(week = week(interval60),  # Create a week variable indicating the week number of the year
+         dotw = wday(interval60, label = TRUE)) %>%  # Create a dotw variable indicating the day of the week (label format)
+  filter(!is.na(Origin.Tract))  # Filter out rows with missing Origin.Tract values
+
 ```
 
 ```{r census_and_panel , message = FALSE}
@@ -407,24 +424,45 @@ This makes a lot of intuitive sense - the demand right now should be relatively 
 
 
 ```{r time_lags , message = FALSE}
+# Arrange the ride.panel dataset based on 'from_station_id' and 'interval60'
+# This step ensures that the dataset is ordered properly for subsequent calculations
 ride.panel <- 
   ride.panel %>% 
-  arrange(from_station_id, interval60) %>% 
-  mutate(lagHour = dplyr::lag(Trip_Count,1),
-         lag2Hours = dplyr::lag(Trip_Count,2),
-         lag3Hours = dplyr::lag(Trip_Count,3),
-         lag4Hours = dplyr::lag(Trip_Count,4),
-         lag12Hours = dplyr::lag(Trip_Count,12),
-         lag1day = dplyr::lag(Trip_Count,24),
-         holiday = ifelse(yday(interval60) == 148,1,0)) %>%
-   mutate(day = yday(interval60)) %>%
-   mutate(holidayLag = case_when(dplyr::lag(holiday, 1) == 1 ~ "PlusOneDay",
-                                 dplyr::lag(holiday, 2) == 1 ~ "PlustTwoDays",
-                                 dplyr::lag(holiday, 3) == 1 ~ "PlustThreeDays",
-                                 dplyr::lead(holiday, 1) == 1 ~ "MinusOneDay",
-                                 dplyr::lead(holiday, 2) == 1 ~ "MinusTwoDays",
-                                 dplyr::lead(holiday, 3) == 1 ~ "MinusThreeDays"),
-         holidayLag = ifelse(is.na(holidayLag) == TRUE, 0, holidayLag))
+  arrange(from_station_id, interval60) %>%
+
+# Compute lag variables for the 'Trip_Count' variable at different time intervals
+  mutate(
+    lagHour = dplyr::lag(Trip_Count, 1),  # Lag of 1 hour
+    lag2Hours = dplyr::lag(Trip_Count, 2),  # Lag of 2 hours
+    lag3Hours = dplyr::lag(Trip_Count, 3),  # Lag of 3 hours
+    lag4Hours = dplyr::lag(Trip_Count, 4),  # Lag of 4 hours
+    lag12Hours = dplyr::lag(Trip_Count, 12),  # Lag of 12 hours
+    lag1day = dplyr::lag(Trip_Count, 24)  # Lag of 1 day (24 hours)
+  ) %>%
+
+# Identify holidays and create a binary variable indicating whether it's a holiday
+  mutate(
+    holiday = ifelse(yday(interval60) == 148, 1, 0)  # Check if it's a holiday (148th day of the year)
+  ) %>%
+
+# Create a variable representing the day of the year
+  mutate(
+    day = yday(interval60)  # Extract the day of the year from 'interval60'
+  ) %>%
+
+# Create additional variables related to holiday lag
+  mutate(
+    holidayLag = case_when(
+      dplyr::lag(holiday, 1) == 1 ~ "PlusOneDay",  # If the previous day was a holiday
+      dplyr::lag(holiday, 2) == 1 ~ "PlusTwoDays",  # If two days ago was a holiday
+      dplyr::lag(holiday, 3) == 1 ~ "PlusThreeDays",  # If three days ago was a holiday
+      dplyr::lead(holiday, 1) == 1 ~ "MinusOneDay",  # If the next day will be a holiday
+      dplyr::lead(holiday, 2) == 1 ~ "MinusTwoDays",  # If two days ahead will be a holiday
+      dplyr::lead(holiday, 3) == 1 ~ "MinusThreeDays"  # If three days ahead will be a holiday
+    ),
+    holidayLag = ifelse(is.na(holidayLag) == TRUE, 0, holidayLag)  # Convert NA to 0 for non-holiday cases
+  )
+
 
 ```
 
@@ -510,7 +548,31 @@ model_pred <- function(dat, fit){
 
 When we run our predictions and summarize our results, we are going to have some NA data - recall we have some lag information that will necessarily trip up the model at the margins of the time frame. 
 
-**We don't create a MAPE statistic here, why is that?**
+This code snippet is performing several operations on a nested data frame (ride.Test.weekNest) containing test data for weekly predictions of rideshare demand. Let's break down what each part of the code is doing:
+
+Model Prediction:
+For each regression model (reg1 to reg5), the map function is applied to the nested data frame (ride.Test.weekNest) to make predictions.
+
+Each map call applies the model_pred function to each data frame in the nested structure, using the corresponding regression model (reg1 to reg5).
+
+The resulting predictions are stored in new columns (ATime_FE, BSpace_FE, etc.).
+
+Reshaping Data:
+The gather function reshapes the data from wide to long format, gathering the predictions (Prediction) from each regression model into a single column.
+
+The -data and -week arguments exclude the data and week columns from the reshaping process, as they are identifiers and not predictions.
+
+Calculating Error Metrics:
+The mutate function is used to create additional columns for observed values (Observed), absolute errors (Absolute_Error), mean absolute error (MAE), and standard deviation of absolute error (sd_AE).
+
+The map function is applied to calculate absolute errors (Absolute_Error) for each prediction compared to the observed values in each data frame of the nested structure.
+
+The map_dbl function calculates the mean absolute error (MAE) and standard deviation of absolute error (sd_AE) across all data frames in the nested structure.
+
+Final Output:
+The resulting data frame (week_predictions) contains predictions, observed values, and error metrics for each regression model, organized by week.
+
+In summary, this code snippet performs model predictions, reshapes the data, calculates error metrics, and organizes the results into a single data frame for further analysis and evaluation of the regression models' performance in predicting rideshare demand.
 
 ```{r do_predicitons }
 week_predictions <- 
